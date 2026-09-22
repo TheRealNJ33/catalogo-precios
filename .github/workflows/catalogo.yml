@@ -2,10 +2,14 @@ name: Catalogo Vidri y Freund
 
 on:
   schedule:
-    # Cada 6 horas. Ajusta segun cuanto tarde tu catalogo completo.
+    # Cada 6 horas. Usa siempre el identificador semanal automatico (produccion).
     - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
+      run_id_override:
+        description: 'Identificador de corrida para PRUEBAS (vacio = usa el semanal de produccion, NO lo cambies para corridas reales)'
+        required: false
+        default: ''
       inicio:
         description: 'Primera categoria (prueba). Vacio = 1'
         required: false
@@ -34,7 +38,12 @@ jobs:
       - name: Calcular identificador de campana (semana ISO, hora El Salvador)
         id: campana
         run: |
-          echo "id=catalogo-$(TZ='America/El_Salvador' date +%G-W%V)" >> "$GITHUB_OUTPUT"
+          OVERRIDE="${{ github.event.inputs.run_id_override }}"
+          if [ -n "$OVERRIDE" ]; then
+            echo "id=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          else
+            echo "id=catalogo-$(TZ='America/El_Salvador' date +%G-W%V)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configurar Python
         uses: actions/setup-python@v5
