@@ -1,0 +1,110 @@
+name: Catalogo Vidri y Freund
+
+on:
+  schedule:
+    # Cada 6 horas. Ajusta segun cuanto tarde tu catalogo completo.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      inicio:
+        description: 'Primera categoria (prueba). Vacio = 1'
+        required: false
+        default: ''
+      fin:
+        description: 'Ultima categoria (prueba). Vacio = todas'
+        required: false
+        default: ''
+      proveedor:
+        description: 'ambos, vidri o freund'
+        required: false
+        default: 'ambos'
+
+concurrency:
+  group: catalogo-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrapear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Calcular identificador de campana (semana ISO, hora El Salvador)
+        id: campana
+        run: |
+          echo "id=catalogo-$(TZ='America/El_Salvador' date +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Restaurar estado previo (si existe)
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: datos
+          key: catalogo-datos-${{ steps.campana.outputs.id }}-${{ github.run_id }}
+          restore-keys: |
+            catalogo-datos-${{ steps.campana.outputs.id }}-
+
+      - name: Verificar si hay estado para reanudar
+        id: estado
+        run: |
+          if [ -d "datos/${{ steps.campana.outputs.id }}" ]; then
+            echo "reanudar=--reanudar" >> "$GITHUB_OUTPUT"
+          else
+            echo "reanudar=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Preparar certificado de Supabase
+        env:
+          SUPABASE_CA_CERT_B64: ${{ secrets.SUPABASE_CA_CERT_B64 }}
+        run: |
+          mkdir -p certs
+          echo "$SUPABASE_CA_CERT_B64" | base64 -d > certs/prod-ca.crt
+
+      - name: Ejecutar scraping + importacion
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SSLMODE: verify-full
+          SUPABASE_SSLROOTCERT: ${{ github.workspace }}/certs/prod-ca.crt
+        run: |
+          INICIO="${{ github.event.inputs.inicio }}"
+          FIN="${{ github.event.inputs.fin }}"
+          PROVEEDOR="${{ github.event.inputs.proveedor }}"
+          ARGS="--run-id ${{ steps.campana.outputs.id }} --guardar ${{ steps.estado.outputs.reanudar }}"
+          if [ -n "$INICIO" ]; then ARGS="$ARGS --inicio $INICIO"; fi
+          if [ -n "$FIN" ]; then ARGS="$ARGS --fin $FIN"; fi
+          if [ -n "$PROVEEDOR" ]; then ARGS="$ARGS --proveedor $PROVEEDOR"; fi
+          echo "Ejecutando: python -u ejecutar_nube.py $ARGS"
+          python -u ejecutar_nube.py $ARGS
+
+      - name: Guardar estado para la proxima corrida
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: datos
+          key: catalogo-datos-${{ steps.campana.outputs.id }}-${{ github.run_id }}
+
+      - name: Subir logs y resumenes como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ steps.campana.outputs.id }}-${{ github.run_id }}
+          path: |
+            datos/${{ steps.campana.outputs.id }}/**/*.log
+            datos/${{ steps.campana.outputs.id }}/**/resumen.json
+            datos/${{ steps.campana.outputs.id }}/pipeline.json
+            datos/${{ steps.campana.outputs.id }}/**/registros_por_revisar.csv
+          retention-days: 30
+          if-no-files-found: ignore
