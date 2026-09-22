@@ -1,0 +1,3 @@
+# Primero ejecute capturar_versiones.py en su entorno de scraping actual.
+-r requirements.scraping.lock.txt
+psycopg[binary]>=3.2,<4

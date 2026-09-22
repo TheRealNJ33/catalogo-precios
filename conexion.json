@@ -1,0 +1,6 @@
+{
+  "host": "aws-0-ca-central-1.pooler.supabase.com",
+  "port": 5432,
+  "dbname": "postgres",
+  "user": "importador_catalogo.qschiwiitswfvdfqcoaq"
+}
