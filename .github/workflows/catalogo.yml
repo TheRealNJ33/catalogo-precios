@@ -96,7 +96,22 @@ jobs:
           if [ -n "$FIN" ]; then ARGS="$ARGS --fin $FIN"; fi
           if [ -n "$PROVEEDOR" ]; then ARGS="$ARGS --proveedor $PROVEEDOR"; fi
           echo "Ejecutando: python -u ejecutar_nube.py $ARGS"
+
+          set +e
           python -u ejecutar_nube.py $ARGS
+          CODIGO=$?
+          set -e
+
+          echo "Codigo de salida de ejecutar_nube.py: $CODIGO"
+
+          if [ "$CODIGO" -eq 0 ]; then
+            echo "Catalogo completo importado correctamente."
+          elif [ "$CODIGO" -eq 2 ]; then
+            echo "AVISO: corrida parcial (catalogo aun no termina). Se reanudara automaticamente en el siguiente disparo programado. Esto NO es un error."
+          else
+            echo "ERROR real: codigo de salida $CODIGO. Revisa los logs subidos como artefacto."
+            exit $CODIGO
+          fi
 
       - name: Guardar estado para la proxima corrida
         if: always()
