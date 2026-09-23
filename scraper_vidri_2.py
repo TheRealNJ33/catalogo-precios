@@ -1418,8 +1418,12 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         mensaje = "Sin productos y sin confirmación visible de categoría vacía; posible carga incompleta."
         print(f"    [Intento {intento}/{MAX_INTENTOS_POR_PAGINA}] {mensaje}")
         if intento < MAX_INTENTOS_POR_PAGINA:
+            print(f"    Esperando {ESPERA_ENTRE_REINTENTOS}s antes de reintentar...")
             await asyncio.sleep(ESPERA_ENTRE_REINTENTOS)
             continue
+        if numero_pagina > 1:
+            print("    -> Sin aviso explícito, pero esta categoría ya tenía productos confirmados en páginas anteriores; se asume fin natural de la paginación.")
+            return [], "sin_productos"
         print("    -> Superado el límite de intentos, saltando a siguiente categoría.")
         errores_paginas.append((url_categoria, numero_pagina, mensaje))
         return [], "error"
