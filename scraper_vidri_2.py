@@ -1269,6 +1269,8 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/411110/accesorios-para-cielo-falso.html",
     "https://www.vidri.com.sv/catalogo/411206/herrajes-para-madera.html",
     "https://www.vidri.com.sv/catalogo/530505/otros-organizadores.html",
+    "https://www.vidri.com.sv/catalogo/570301/comida-para-gato.html",
+    "https://www.vidri.com.sv/catalogo/850404/caracolicida-y-molusquicidas.html",
 }
 
 # ---------------------------------------------------------------------
