@@ -22,6 +22,10 @@ on:
         description: 'ambos, vidri o freund'
         required: false
         default: 'ambos'
+      max_paginas:
+        description: 'Limite de paginas por categoria (vacio = 50, el valor por defecto del scraper)'
+        required: false
+        default: ''
 
 concurrency:
   group: catalogo-scraper
@@ -91,10 +95,12 @@ jobs:
           INICIO="${{ github.event.inputs.inicio }}"
           FIN="${{ github.event.inputs.fin }}"
           PROVEEDOR="${{ github.event.inputs.proveedor }}"
+          MAXPAGINAS="${{ github.event.inputs.max_paginas }}"
           ARGS="--run-id ${{ steps.campana.outputs.id }} --guardar ${{ steps.estado.outputs.reanudar }}"
           if [ -n "$INICIO" ]; then ARGS="$ARGS --inicio $INICIO"; fi
           if [ -n "$FIN" ]; then ARGS="$ARGS --fin $FIN"; fi
           if [ -n "$PROVEEDOR" ]; then ARGS="$ARGS --proveedor $PROVEEDOR"; fi
+          if [ -n "$MAXPAGINAS" ]; then ARGS="$ARGS --max-paginas $MAXPAGINAS"; fi
           echo "Ejecutando: python -u ejecutar_nube.py $ARGS"
 
           set +e
