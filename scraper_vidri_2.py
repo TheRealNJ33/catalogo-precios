@@ -1260,6 +1260,16 @@ GUARDAR_CADA_N_CATEGORIAS = 20
 # Marca real (comprobada) del contenedor de productos en el HTML renderizado.
 MARCA_CONTENEDOR_PRODUCTOS = 'id="main_products_container"'
 
+CATEGORIAS_VACIAS_CONFIRMADAS = {
+    "https://www.vidri.com.sv/catalogo/430202/cinturones-de-posicionamiento.html",
+    "https://www.vidri.com.sv/catalogo/461710/cambiadores-de-serrucho.html",
+    "https://www.vidri.com.sv/catalogo/461309/accesorios-para-nipleria.html",
+    "https://www.vidri.com.sv/catalogo/201909/interruptores-seccionadores-para-fusible.html",
+    "https://www.vidri.com.sv/catalogo/201001/alambre-electrico-tipo-tf.html",
+    "https://www.vidri.com.sv/catalogo/411110/accesorios-para-cielo-falso.html",
+    "https://www.vidri.com.sv/catalogo/411206/herrajes-para-madera.html",
+    "https://www.vidri.com.sv/catalogo/530505/otros-organizadores.html",
+}
 
 # ---------------------------------------------------------------------
 # 2. Esquema de extracción: solo nombre, sku y precio
@@ -1381,6 +1391,10 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         estado = "sin_productos" -> confirmado: aviso explícito visible de ausencia de resultados
         estado = "error"         -> se agotaron los reintentos por error real
     """
+    
+    if url_categoria in CATEGORIAS_VACIAS_CONFIRMADAS:
+        return [], "sin_productos"
+    
     for intento in range(1, MAX_INTENTOS_POR_PAGINA + 1):
         try:
             result = await crawler.arun(url=url, config=run_config)
