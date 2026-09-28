@@ -3,7 +3,7 @@ name: Catalogo Vidri y Freund
 on:
   schedule:
     # Cada 6 horas. Usa siempre el identificador semanal automatico (produccion).
-    - cron: '0 */6 * * *'
+    - cron: '0 0,6,12,18 * * *'  # Explícitamente 0, 6, 12, 18 UTC
   workflow_dispatch:
     inputs:
       run_id_override:
