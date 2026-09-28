@@ -25,7 +25,7 @@ on:
       max_paginas:
         description: 'Limite de paginas por categoria (vacio = 50, el valor por defecto del scraper)'
         required: false
-        default: ''
+        default: '65'
 
 concurrency:
   group: catalogo-scraper
