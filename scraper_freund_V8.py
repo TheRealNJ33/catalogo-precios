@@ -355,7 +355,7 @@ CATEGORY_URLS = [
     "https://www.freundferreteria.com/categoria/FLORES/productos/NVL3-266",
 ]
 
-MAX_PAGINAS_POR_CATEGORIA = 50
+MAX_PAGINAS_POR_CATEGORIA = 100
 PRODUCTOS_POR_PAGINA = 20  # Freund muestra 20 productos por página
 MAX_INTENTOS_POR_PAGINA = 3
 ESPERA_BASE_ENTRE_REINTENTOS = 4  # segundos; se multiplica por el número de intento
