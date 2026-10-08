@@ -23,9 +23,9 @@ on:
         required: false
         default: 'ambos'
       max_paginas:
-        description: 'Limite de paginas por categoria (vacio = 50, el valor por defecto del scraper)'
+        description: 'Limite de paginas por categoria (vacio = 100)'
         required: false
-        default: '65'
+        default: '100'
 
 concurrency:
   group: catalogo-scraper
@@ -96,6 +96,7 @@ jobs:
           FIN="${{ github.event.inputs.fin }}"
           PROVEEDOR="${{ github.event.inputs.proveedor }}"
           MAXPAGINAS="${{ github.event.inputs.max_paginas }}"
+          MAXPAGINAS="${MAXPAGINAS:-100}"
           ARGS="--run-id ${{ steps.campana.outputs.id }} --guardar ${{ steps.estado.outputs.reanudar }}"
           if [ -n "$INICIO" ]; then ARGS="$ARGS --inicio $INICIO"; fi
           if [ -n "$FIN" ]; then ARGS="$ARGS --fin $FIN"; fi
