@@ -88,7 +88,6 @@ CATEGORY_URLS = [
     "https://www.vidri.com.sv/catalogo/420610/tornillos-para-lamina.html",
     "https://www.vidri.com.sv/catalogo/420611/pines-huecos-y-chavetas.html",
     "https://www.vidri.com.sv/catalogo/420612/tachuelas.html",
-    "https://www.vidri.com.sv/catalogo/2605/ba%C3%B1eras.html",
     "https://www.vidri.com.sv/catalogo/2603/mingitorios.html",
     "https://www.vidri.com.sv/catalogo/2610/secadores-de-manos.html",
     "https://www.vidri.com.sv/catalogo/2506/medidores-y-contadores-de-agua.html",
@@ -395,7 +394,6 @@ CATEGORY_URLS = [
     "https://www.vidri.com.sv/catalogo/210507/protectores-y-rejillas-para-foco.html",
     "https://www.vidri.com.sv/catalogo/210508/cambiadores-y-extractores-de-foco.html",
     "https://www.vidri.com.sv/catalogo/210509/otros-accesorios-y-repuestos-para-foco-y-lamparas.html",
-    "https://www.vidri.com.sv/catalogo/210605/focos-de-alta-potencia-para-alumbrado-p%C3%BAblico.html",
     "https://www.vidri.com.sv/catalogo/210606/reflectores-incandescentes.html",
     "https://www.vidri.com.sv/catalogo/210701/focos-y-bombillos-led.html",
     "https://www.vidri.com.sv/catalogo/210702/reflectores-led-para-exterior.html",
@@ -1275,6 +1273,8 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/530505/otros-organizadores.html",
     "https://www.vidri.com.sv/catalogo/570301/comida-para-gato.html",
     "https://www.vidri.com.sv/catalogo/850404/caracolicida-y-molusquicidas.html",
+    "https://www.vidri.com.sv/catalogo/210605/focos-de-alta-potencia-para-alumbrado-p%C3%BAblico.html",
+    "https://www.vidri.com.sv/catalogo/2605/ba%C3%B1eras.html",
 }
 
 # ---------------------------------------------------------------------
