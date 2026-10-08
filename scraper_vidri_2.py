@@ -88,6 +88,7 @@ CATEGORY_URLS = [
     "https://www.vidri.com.sv/catalogo/420610/tornillos-para-lamina.html",
     "https://www.vidri.com.sv/catalogo/420611/pines-huecos-y-chavetas.html",
     "https://www.vidri.com.sv/catalogo/420612/tachuelas.html",
+    "https://www.vidri.com.sv/catalogo/2605/ba%C3%B1eras.html",
     "https://www.vidri.com.sv/catalogo/2603/mingitorios.html",
     "https://www.vidri.com.sv/catalogo/2610/secadores-de-manos.html",
     "https://www.vidri.com.sv/catalogo/2506/medidores-y-contadores-de-agua.html",
@@ -394,6 +395,7 @@ CATEGORY_URLS = [
     "https://www.vidri.com.sv/catalogo/210507/protectores-y-rejillas-para-foco.html",
     "https://www.vidri.com.sv/catalogo/210508/cambiadores-y-extractores-de-foco.html",
     "https://www.vidri.com.sv/catalogo/210509/otros-accesorios-y-repuestos-para-foco-y-lamparas.html",
+    "https://www.vidri.com.sv/catalogo/210605/focos-de-alta-potencia-para-alumbrado-p%C3%BAblico.html",
     "https://www.vidri.com.sv/catalogo/210606/reflectores-incandescentes.html",
     "https://www.vidri.com.sv/catalogo/210701/focos-y-bombillos-led.html",
     "https://www.vidri.com.sv/catalogo/210702/reflectores-led-para-exterior.html",
@@ -1273,8 +1275,15 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/530505/otros-organizadores.html",
     "https://www.vidri.com.sv/catalogo/570301/comida-para-gato.html",
     "https://www.vidri.com.sv/catalogo/850404/caracolicida-y-molusquicidas.html",
-    "https://www.vidri.com.sv/catalogo/210605/focos-de-alta-potencia-para-alumbrado-p%C3%BAblico.html",
-    "https://www.vidri.com.sv/catalogo/2605/ba%C3%B1eras.html",
+}
+
+# Verificación visual del usuario y HTML del runner, 08-10-2026.
+# El sitio entrega navegación y pie, pero omite todo el listado en estas URL.
+# No se saltan las consultas: si aparecen productos, se extraen primero.
+CATEGORIAS_SIN_LISTADO_VERIFICADAS = {
+    "https://www.vidri.com.sv/catalogo/2605/ba%C3%B1eras.html": "Bañeras",
+    "https://www.vidri.com.sv/catalogo/210605/focos-de-alta-potencia-para-alumbrado-p%C3%BAblico.html":
+        "Focos de alta potencia para alumbrado público",
 }
 
 # ---------------------------------------------------------------------
@@ -1406,6 +1415,54 @@ def confirma_sin_resultados(html):
     ))
 
 
+class _EstructuraSinListado(HTMLParser):
+    """Comprueba la estructura observada, sin confundir CSS con elementos HTML."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.breadcrumb = []
+        self.footer = False
+        self.listado = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = attrs.get("class", "").split()
+        in_breadcrumb = (bool(self.stack and self.stack[-1][1])
+                         or (tag == "ol" and "cd-breadcrumb" in classes))
+        self.footer |= "footer" in classes
+        self.listado |= (attrs.get("id") == "main_products_container"
+                         or "catalog_products_container" in classes
+                         or "catalog_products_card" in classes)
+        if tag not in _TextoDelDocumento.VOID:
+            self.stack.append((tag, in_breadcrumb))
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in _TextoDelDocumento.VOID:
+            self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self.stack and self.stack[-1][1]:
+            self.breadcrumb.append(data)
+
+
+def confirma_sin_listado_revisado(html, url_categoria):
+    nombre = CATEGORIAS_SIN_LISTADO_VERIFICADAS.get(url_categoria)
+    if not nombre:
+        return False
+    parser = _EstructuraSinListado()
+    parser.feed(html or "")
+    breadcrumb = " ".join(" ".join(parser.breadcrumb).split()).casefold()
+    return (parser.footer and not parser.listado
+            and breadcrumb.endswith(nombre.casefold()))
+
+
 def guardar_diagnostico(result, url, numero_pagina, motivo):
     """El workflow existente ya adjunta los *.log de este directorio."""
     folder = os.environ.get("CATALOGO_DIAGNOSTICO_DIR")
@@ -1452,7 +1509,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
     """
     Devuelve (productos, estado):
         estado = "ok"            -> hay productos
-        estado = "sin_productos" -> confirmado: aviso explícito visible de ausencia de resultados
+        estado = "sin_productos" -> aviso del sitio o categoría revisada sin listado
         estado = "error"         -> se agotaron los reintentos por error real
     """
     
@@ -1500,6 +1557,12 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
             print(f"    Esperando {ESPERA_ENTRE_REINTENTOS}s antes de reintentar...")
             await asyncio.sleep(ESPERA_ENTRE_REINTENTOS)
             continue
+        if (numero_pagina == 1 and getattr(result, "status_code", None) == 200
+                and data == [] and confirma_sin_listado_revisado(result.html, url_categoria)):
+            motivo = "Sin listado; categoría verificada visualmente el 08-10-2026 y estructura comprobada en esta consulta"
+            print(f"    -> {motivo}.")
+            guardar_diagnostico(result, url, numero_pagina, motivo)
+            return [], "sin_productos"
         # Conserva las confirmaciones manuales del código recibido, pero consulta
         # primero: una categoría puede volver a tener productos en otra semana.
         parser = _TextoDelDocumento()
@@ -1528,7 +1591,7 @@ async def scrape_categoria_completa(crawler, url_base):
 
         if estado == "sin_productos":
             if pagina == 1:
-                print("    -> Categoría sin productos (confirmado: aviso explícito visible).")
+                print("    -> Categoría sin productos (aviso del sitio o revisión confirmada).")
                 categorias_sin_productos.append(url_base)
             else:
                 print(f"    -> Sin productos (confirmado). Fin de la categoría ({pagina - 1} páginas con datos).")
@@ -1563,4 +1626,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
