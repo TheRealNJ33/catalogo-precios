@@ -15,8 +15,12 @@ No actualice las dependencias sin capturar primero las versiones que funcionan:
 
 import asyncio
 import json
+import os
+import hashlib
+import re
 import time
 import sys
+from pathlib import Path
 from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 import pandas as pd
@@ -1251,7 +1255,7 @@ CATEGORY_URLS = [
 
 PROVEEDOR = "Vidri"
 
-MAX_PAGINAS_POR_CATEGORIA = 50
+MAX_PAGINAS_POR_CATEGORIA = 100
 PRODUCTOS_POR_PAGINA = 15  # Vidrí muestra 15 productos por página
 MAX_INTENTOS_POR_PAGINA = 3
 ESPERA_ENTRE_REINTENTOS = 4  # segundos
@@ -1300,6 +1304,15 @@ run_config = CrawlerRunConfig(
 
 browser_config = BrowserConfig(headless=True, verbose=False)
 
+# Solo el último intento espera más; no penaliza cada página del catálogo.
+run_config_reintento = CrawlerRunConfig(
+    cache_mode=CacheMode.BYPASS,
+    extraction_strategy=extraction_strategy,
+    wait_until="networkidle",
+    delay_before_return_html=12.0,
+    page_timeout=45000,
+)
+
 categorias_sin_productos = []
 errores_paginas = []  # (url_categoria, numero_pagina, mensaje_error)
 
@@ -1347,19 +1360,38 @@ def contenedor_de_productos_existe(html):
 class _TextoDelDocumento(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.ignored = 0
+        self.stack = []
         self.parts = []
+        self.cards = 0
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"}
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "template", "noscript"):
-            self.ignored += 1
+        attrs = dict(attrs)
+        style = re.sub(r"\s+", "", attrs.get("style", "")).lower()
+        hidden = (bool(self.stack and self.stack[-1][1])
+                  or tag in ("script", "style", "template", "noscript")
+                  or "hidden" in attrs or attrs.get("aria-hidden", "").lower() == "true"
+                  or "display:none" in style or "visibility:hidden" in style)
+        if not hidden and "catalog_products_card" in attrs.get("class", "").split():
+            self.cards += 1
+        if tag not in self.VOID:
+            self.stack.append((tag, hidden))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID:
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style", "template", "noscript"):
-            self.ignored = max(0, self.ignored - 1)
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
 
     def handle_data(self, data):
-        if not self.ignored:
+        if not self.stack or not self.stack[-1][1]:
             self.parts.append(data)
 
 
@@ -1368,10 +1400,40 @@ def confirma_sin_resultados(html):
     parser = _TextoDelDocumento()
     parser.feed(html or "")
     text = " ".join(" ".join(parser.parts).split()).casefold()
-    return any(message in text for message in (
+    return parser.cards == 0 and any(message in text for message in (
         "no se encontraron productos", "no se encontraron resultados",
         "no hay productos en esta categoría", "no hay productos en esta categoria"
     ))
+
+
+def guardar_diagnostico(result, url, numero_pagina, motivo):
+    """El workflow existente ya adjunta los *.log de este directorio."""
+    folder = os.environ.get("CATALOGO_DIAGNOSTICO_DIR")
+    if not folder:
+        print("    Diagnóstico: " + motivo)
+        return
+    html = getattr(result, "html", "") or ""
+    parser = _TextoDelDocumento()
+    parser.feed(html)
+    evidence = {
+        "url": url, "pagina": numero_pagina, "motivo": motivo,
+        "consultado_en": datetime.now(timezone.utc).isoformat(),
+        "http": getattr(result, "status_code", None),
+        "url_final": getattr(result, "redirected_url", None),
+        "tarjetas_en_html": parser.cards,
+        "error_navegador": str(getattr(result, "error_message", "") or "")[:1000],
+        "extraccion": str(getattr(result, "extracted_content", "") or "")[:10000],
+        "texto": " ".join(" ".join(parser.parts).split()),
+        "html": html,
+    }
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+    path = Path(folder) / f"pagina_{key}_{numero_pagina}.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"    Diagnóstico guardado: {path}")
+    except OSError as exc:
+        print(f"    No se pudo guardar el diagnóstico: {exc}")
 
 
 def guardar_resultados(todos_los_productos, es_final=False):
@@ -1394,12 +1456,11 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         estado = "error"         -> se agotaron los reintentos por error real
     """
     
-    if url_categoria in CATEGORIAS_VACIAS_CONFIRMADAS:
-        return [], "sin_productos"
-    
     for intento in range(1, MAX_INTENTOS_POR_PAGINA + 1):
+        result = None
         try:
-            result = await crawler.arun(url=url, config=run_config)
+            config = run_config_reintento if intento == MAX_INTENTOS_POR_PAGINA else run_config
+            result = await crawler.arun(url=url, config=config)
         except Exception as e:
             mensaje = str(e)
             print(f"    [Intento {intento}/{MAX_INTENTOS_POR_PAGINA}] Error real en página {numero_pagina}: {mensaje[:120]}")
@@ -1407,6 +1468,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
                 await asyncio.sleep(ESPERA_ENTRE_REINTENTOS)
                 continue
             print("    -> Superado el límite de intentos, saltando a siguiente categoría.")
+            guardar_diagnostico(result, url, numero_pagina, mensaje)
             errores_paginas.append((url_categoria, numero_pagina, mensaje[:200]))
             return [], "error"
 
@@ -1417,6 +1479,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
                 await asyncio.sleep(ESPERA_ENTRE_REINTENTOS)
                 continue
             print("    -> Superado el límite de intentos, saltando a siguiente categoría.")
+            guardar_diagnostico(result, url, numero_pagina, mensaje)
             errores_paginas.append((url_categoria, numero_pagina, mensaje[:200]))
             return [], "error"
 
@@ -1425,7 +1488,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         except (json.JSONDecodeError, TypeError):
             data = []
 
-        if data:
+        if isinstance(data, list) and data and all(isinstance(item, dict) for item in data):
             return procesar_datos(data), "ok"
 
         # La ausencia del contenedor no demuestra que la categoría esté vacía.
@@ -1437,10 +1500,16 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
             print(f"    Esperando {ESPERA_ENTRE_REINTENTOS}s antes de reintentar...")
             await asyncio.sleep(ESPERA_ENTRE_REINTENTOS)
             continue
-        if numero_pagina > 1:
-            print("    -> Sin aviso explícito, pero esta categoría ya tenía productos confirmados en páginas anteriores; se asume fin natural de la paginación.")
+        # Conserva las confirmaciones manuales del código recibido, pero consulta
+        # primero: una categoría puede volver a tener productos en otra semana.
+        parser = _TextoDelDocumento()
+        parser.feed(result.html or "")
+        if (numero_pagina == 1 and url_categoria in CATEGORIAS_VACIAS_CONFIRMADAS
+                and parser.cards == 0 and contenedor_de_productos_existe(result.html)):
+            guardar_diagnostico(result, url, numero_pagina, "Vacía según confirmación manual preexistente")
             return [], "sin_productos"
         print("    -> Superado el límite de intentos, saltando a siguiente categoría.")
+        guardar_diagnostico(result, url, numero_pagina, mensaje)
         errores_paginas.append((url_categoria, numero_pagina, mensaje))
         return [], "error"
 
@@ -1494,3 +1563,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
