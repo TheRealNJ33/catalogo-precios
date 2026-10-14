@@ -18,9 +18,11 @@ import json
 import os
 import hashlib
 import re
+import sqlite3
 import time
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 import pandas as pd
@@ -1423,6 +1425,10 @@ class _EstructuraSinListado(HTMLParser):
         self.breadcrumb = []
         self.footer = False
         self.listado = False
+        self.contenedor = False
+        self.tarjetas = False
+        self.referencias = []
+        self.nombre = ""
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -1430,9 +1436,16 @@ class _EstructuraSinListado(HTMLParser):
         in_breadcrumb = (bool(self.stack and self.stack[-1][1])
                          or (tag == "ol" and "cd-breadcrumb" in classes))
         self.footer |= "footer" in classes
-        self.listado |= (attrs.get("id") == "main_products_container"
-                         or "catalog_products_container" in classes
-                         or "catalog_products_card" in classes)
+        self.contenedor |= (attrs.get("id") == "main_products_container"
+                            or "catalog_products_container" in classes)
+        self.tarjetas |= "catalog_products_card" in classes
+        self.listado = self.contenedor or self.tarjetas
+        if tag == "meta" and attrs.get("property") == "og:url":
+            self.referencias.append(attrs.get("content", ""))
+        if tag == "link" and "canonical" in attrs.get("rel", "").split():
+            self.referencias.append(attrs.get("href", ""))
+        if tag == "meta" and attrs.get("property") == "og:title":
+            self.nombre = attrs.get("content", "")
         if tag not in _TextoDelDocumento.VOID:
             self.stack.append((tag, in_breadcrumb))
 
@@ -1461,6 +1474,65 @@ def confirma_sin_listado_revisado(html, url_categoria):
     breadcrumb = " ".join(" ".join(parser.breadcrumb).split()).casefold()
     return (parser.footer and not parser.listado
             and breadcrumb.endswith(nombre.casefold()))
+
+
+def _id_categoria(url):
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or parsed.hostname not in ("www.vidri.com.sv", "vidri.com.sv"):
+        return None
+    match = re.match(r"^/catalogo/(\d+)/", parsed.path)
+    return match.group(1) if match else None
+
+
+def _estructura_de_categoria(html, url_categoria):
+    parser = _EstructuraSinListado()
+    parser.feed(html or "")
+    identifier = _id_categoria(url_categoria)
+    breadcrumb = " ".join(" ".join(parser.breadcrumb).split()).casefold()
+    nombre = " ".join(parser.nombre.split()).casefold()
+    references = [_id_categoria(url) for url in parser.referencias]
+    # Verifica la identidad de la categoría; un HTTP 200 por sí solo no basta.
+    correcta = (identifier is not None and bool(references)
+                and all(value == identifier for value in references)
+                and bool(nombre) and breadcrumb.endswith(nombre) and parser.footer)
+    return parser, correcta
+
+
+def _pagina_previa_guardada(url_categoria, numero_pagina):
+    """Lee el checkpoint sin modificarlo; no infiere éxito por page > 1."""
+    if numero_pagina <= 1:
+        return False
+    folder = os.environ.get("CATALOGO_DIAGNOSTICO_DIR")
+    if not folder:
+        return False
+    path = Path(folder).parent / "estado.sqlite"
+    if not path.is_file():
+        return False
+    db = None
+    try:
+        db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        manifest_row = db.execute("SELECT value FROM meta WHERE key='manifest'").fetchone()
+        manifest = json.loads(manifest_row[0]) if manifest_row else {}
+        if (str(manifest.get("supplier", "")).casefold() != PROVEEDOR.casefold()
+                or url_categoria not in manifest.get("urls", [])):
+            return False
+        category = db.execute("SELECT next_page FROM categories WHERE url=?", (url_categoria,)).fetchone()
+        previous = db.execute("SELECT payload FROM pages WHERE url=? AND page=?",
+                              (url_categoria, numero_pagina - 1)).fetchone()
+        if not category or category[0] != numero_pagina or not previous:
+            return False
+        rows = json.loads(previous[0])
+        return (isinstance(rows, list) and len(rows) >= PRODUCTOS_POR_PAGINA
+                and all(isinstance(row, dict) and row.get("sku") and row.get("nombre")
+                        and row.get("proveedor") == PROVEEDOR for row in rows))
+    except (sqlite3.Error, ValueError, TypeError):
+        return False
+    finally:
+        if db is not None:
+            db.close()
 
 
 def guardar_diagnostico(result, url, numero_pagina, motivo):
@@ -1513,12 +1585,14 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         estado = "error"         -> se agotaron los reintentos por error real
     """
     
+    vacios_estructurados = 0
     for intento in range(1, MAX_INTENTOS_POR_PAGINA + 1):
         result = None
         try:
             config = run_config_reintento if intento == MAX_INTENTOS_POR_PAGINA else run_config
             result = await crawler.arun(url=url, config=config)
         except Exception as e:
+            vacios_estructurados = 0
             mensaje = str(e)
             print(f"    [Intento {intento}/{MAX_INTENTOS_POR_PAGINA}] Error real en página {numero_pagina}: {mensaje[:120]}")
             if intento < MAX_INTENTOS_POR_PAGINA:
@@ -1530,6 +1604,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
             return [], "error"
 
         if not result.success or (getattr(result, "status_code", 200) or 200) >= 400:
+            vacios_estructurados = 0
             mensaje = result.error_message or f"HTTP {getattr(result, 'status_code', 'desconocido')}"
             print(f"    [Intento {intento}/{MAX_INTENTOS_POR_PAGINA}] Error real en página {numero_pagina}: {mensaje[:120]}")
             if intento < MAX_INTENTOS_POR_PAGINA:
@@ -1543,7 +1618,7 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         try:
             data = json.loads(result.extracted_content)
         except (json.JSONDecodeError, TypeError):
-            data = []
+            data = None
 
         if isinstance(data, list) and data and all(isinstance(item, dict) for item in data):
             return procesar_datos(data), "ok"
@@ -1551,6 +1626,13 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
         # La ausencia del contenedor no demuestra que la categoría esté vacía.
         if confirma_sin_resultados(result.html):
             return [], "sin_productos"
+        estructura, categoria_correcta = _estructura_de_categoria(result.html, url_categoria)
+        final_url = getattr(result, "redirected_url", None)
+        if final_url and _id_categoria(final_url) != _id_categoria(url_categoria):
+            categoria_correcta = False
+        vacio_consistente = (getattr(result, "status_code", None) == 200 and data == []
+                             and categoria_correcta and not estructura.tarjetas)
+        vacios_estructurados = vacios_estructurados + 1 if vacio_consistente else 0
         mensaje = "Sin productos y sin confirmación visible de categoría vacía; posible carga incompleta."
         print(f"    [Intento {intento}/{MAX_INTENTOS_POR_PAGINA}] {mensaje}")
         if intento < MAX_INTENTOS_POR_PAGINA:
@@ -1563,13 +1645,17 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
             print(f"    -> {motivo}.")
             guardar_diagnostico(result, url, numero_pagina, motivo)
             return [], "sin_productos"
-        # Conserva las confirmaciones manuales del código recibido, pero consulta
-        # primero: una categoría puede volver a tener productos en otra semana.
-        parser = _TextoDelDocumento()
-        parser.feed(result.html or "")
         if (numero_pagina == 1 and url_categoria in CATEGORIAS_VACIAS_CONFIRMADAS
-                and parser.cards == 0 and contenedor_de_productos_existe(result.html)):
-            guardar_diagnostico(result, url, numero_pagina, "Vacía según confirmación manual preexistente")
+                and vacios_estructurados == MAX_INTENTOS_POR_PAGINA):
+            motivo = "Categoría vacía conocida; identidad y ausencia de tarjetas verificadas tras tres consultas"
+            print(f"    -> {motivo}.")
+            guardar_diagnostico(result, url, numero_pagina, motivo)
+            return [], "sin_productos"
+        if (numero_pagina > 1 and vacios_estructurados == MAX_INTENTOS_POR_PAGINA
+                and not estructura.contenedor and _pagina_previa_guardada(url_categoria, numero_pagina)):
+            motivo = "Fin de paginación: página previa completa guardada; tres respuestas de la misma categoría sin listado"
+            print(f"    -> {motivo}.")
+            guardar_diagnostico(result, url, numero_pagina, motivo)
             return [], "sin_productos"
         print("    -> Superado el límite de intentos, saltando a siguiente categoría.")
         guardar_diagnostico(result, url, numero_pagina, mensaje)
@@ -1620,6 +1706,17 @@ async def scrape_categoria_completa(crawler, url_base):
 
 
 def main():
+    # Permite también el uso directo del scraper sin el orquestador.
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--run-id")
+    parser.add_argument("--directorio", type=Path, default=Path("datos"))
+    context, _ = parser.parse_known_args()
+    if context.run_id and not os.environ.get("CATALOGO_DIAGNOSTICO_DIR"):
+        from ejecucion_persistente import validate_id
+        identifier = validate_id(context.run_id)
+        os.environ["CATALOGO_DIAGNOSTICO_DIR"] = str(
+            context.directorio.resolve() / identifier / "vidri" / "diagnostico")
     from ejecucion_persistente import cli
     return cli(sys.modules[__name__])
 
