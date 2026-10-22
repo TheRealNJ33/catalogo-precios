@@ -1277,6 +1277,8 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/530505/otros-organizadores.html",
     "https://www.vidri.com.sv/catalogo/570301/comida-para-gato.html",
     "https://www.vidri.com.sv/catalogo/850404/caracolicida-y-molusquicidas.html",
+    # Sin interés para el proyecto (confirmado por el usuario); la página no trae listado propio.
+    "https://www.vidri.com.sv/catalogo/520801/botellas.html",
 }
 
 # Verificación visual del usuario y HTML del runner, 08-10-2026.

@@ -1,8 +1,8 @@
 """Reanuda proveedores pendientes; importa solo CSV completos y conserva su confirmación.
 
-Salidas: 0 = selección terminada; 2 = parcial reanudable; 1 = fallo o plazo vencido.
-La campaña de producción catalogo-AAAA-WNN vence el miércoles a las 01:17 de
-El Salvador. Las corridas de prueba (otro ID o rango parcial) no usan ese plazo.
+Salidas: 0 = selección terminada; 2 = parcial reanudable; 1 = fallo.
+La campaña de producción catalogo-AAAA-WNN no tiene plazo de guardado: se reanuda
+hasta completarse. Las corridas de prueba (otro ID) pueden usar rangos parciales.
 """
 import argparse
 import ast
@@ -14,12 +14,10 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from ejecucion_persistente import atomic_json, lock, run_id, validate_id, now
 
 SCRIPTS = {'vidri': 'scraper_vidri_2.py', 'freund': 'scraper_freund_V8.py'}
-ES = timezone(timedelta(hours=-6))
 
 
 def read_json(path):
@@ -86,13 +84,8 @@ def saved_result(target, supplier, previous, urls):
     return {**previous, 'sha256_csv': report['sha256_csv'], 'estado_verificado': True}
 
 
-def weekly_deadline(identifier, hour):
-    match = re.fullmatch(r'catalogo-(\d{4})-W(\d{2})', identifier)
-    if not match:
-        return None
-    monday = datetime.fromisocalendar(int(match[1]), int(match[2]), 1).replace(tzinfo=ES)
-    hh, mm = map(int, hour.split(':'))
-    return monday + timedelta(days=2, hours=hh, minutes=mm)
+def is_weekly(identifier):
+    return re.fullmatch(r'catalogo-(\d{4})-W(\d{2})', identifier) is not None
 
 
 def run_logged(command, logfile, base, deadline, env=None):
@@ -126,7 +119,6 @@ def main():
     parser.add_argument('--fin', type=int)
     parser.add_argument('--max-paginas', type=int, default=100)
     parser.add_argument('--minutos-maximos', type=float, default=315)
-    parser.add_argument('--hora-limite-miercoles', default='01:17', metavar='HH:MM')
     parser.add_argument('--xlsx', action='store_true')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--guardar', action='store_true')
@@ -136,15 +128,13 @@ def main():
         parser.error('--reanudar requiere --run-id')
     if args.max_paginas < 1 or not 0 < args.minutos_maximos <= 315:
         parser.error('--max-paginas debe ser positivo y --minutos-maximos debe estar entre 0 y 315')
-    if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', args.hora_limite_miercoles):
-        parser.error('--hora-limite-miercoles debe ser HH:MM')
     base = Path(__file__).resolve().parent
     try:
         identifier = validate_id(args.run_id or run_id())
         folder = args.directorio.resolve() / identifier
         suppliers = list(SCRIPTS) if args.proveedor == 'ambos' else [args.proveedor]
         # Un rango acotado no puede completar una campaña semanal de producción.
-        production = weekly_deadline(identifier, args.hora_limite_miercoles)
+        production = is_weekly(identifier)
         if production and (args.inicio != 1 or args.fin is not None):
             raise ValueError('Use un run-id de prueba para limitar categorías; el ID semanal exige el catálogo completo')
         selected_urls = {s: selection(base, s, args.inicio, args.fin) for s in suppliers}
@@ -173,8 +163,7 @@ def main():
                                and results.get(s, {}).get('alcance_completo') is True
                                and results.get(s, {}).get('estado_verificado') is True for s in SCRIPTS)
                 value = {'run_id': identifier, 'actualizado_en': now(), 'resultados': results,
-                         'campana_completa': complete,
-                         'limite_guardado': production.isoformat() if production else None}
+                         'campana_completa': complete}
                 atomic_json(path, value)
                 return complete
 
@@ -273,9 +262,6 @@ def main():
                 print(supplier + ': ' + json.dumps(status, ensure_ascii=False), flush=True)
             complete = persist()
             if args.guardar and production and not complete:
-                if datetime.now(ES) >= production:
-                    print('ERROR: venció el plazo del miércoles y aún falta confirmar el guardado de ambos proveedores.', file=sys.stderr)
-                    return 1
                 pending = True
             if hard_error:
                 print('ERROR: no se confirmó el guardado; revise los logs.', file=sys.stderr)
