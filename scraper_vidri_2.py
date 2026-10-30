@@ -1279,6 +1279,8 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/850404/caracolicida-y-molusquicidas.html",
     # Sin interés para el proyecto (confirmado por el usuario); la página no trae listado propio.
     "https://www.vidri.com.sv/catalogo/520801/botellas.html",
+    # Verificada vacía por el usuario el 30-10-2026.
+    "https://www.vidri.com.sv/catalogo/351902/chumaceras.html",
 }
 
 # Verificación visual del usuario y HTML del runner, 08-10-2026.
