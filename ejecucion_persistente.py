@@ -134,14 +134,33 @@ class State:
         if exists:
             previous = self.db.execute("select value from meta where key='manifest'").fetchone()
             if not previous or previous[0] != manifest:
-                self.db.close()
-                raise ValueError('El proveedor o las URL difieren del estado guardado. Use la selección original.')
+                added = self._extend(previous, supplier, urls, manifest)
+                print(f'Se agregaron {len(added)} categorías nuevas al estado guardado.', flush=True)
         else:
             with self.db:
                 self.db.execute('insert into meta values (?,?)', ('manifest', manifest))
                 self.db.execute('insert into meta values (?,?)', ('started_at', now()))
                 self.db.executemany('insert into categories(url,idx) values (?,?)',
                                     [(u, i) for i, u in enumerate(urls, 1)])
+
+    def _extend(self, previous, supplier, urls, manifest):
+        """Acepta que la lista crezca entre corridas; cualquier otro cambio sigue siendo un error."""
+        saved = json.loads(previous[0]) if previous else {}
+        old = saved.get('urls', [])
+        if (saved.get('supplier') != supplier or not set(old) <= set(urls)
+                or len(set(urls)) != len(urls)):
+            self.db.close()
+            raise ValueError('El proveedor o las URL difieren del estado guardado. Use la selección original.')
+        known = set(old)
+        added = [u for u in urls if u not in known]
+        with self.db:
+            # Las categorías nuevas pueden quedar en medio de la lista: se renumera para conservar el orden.
+            self.db.executemany('update categories set idx=? where url=?',
+                                [(i, u) for i, u in enumerate(urls, 1) if u in known])
+            self.db.executemany('insert into categories(url,idx) values (?,?)',
+                                [(u, i) for i, u in enumerate(urls, 1) if u not in known])
+            self.db.execute("update meta set value=? where key='manifest'", (manifest,))
+        return added
 
     def close(self):
         self.db.close()
