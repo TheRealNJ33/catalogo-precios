@@ -144,6 +144,9 @@ def import_rows(psycopg, config, password, rows, simulate):
     sslmode = os.environ.get('SUPABASE_SSLMODE', 'require')
     if sslmode not in ('require', 'verify-full'):
         raise ValueError('SUPABASE_SSLMODE debe ser require o verify-full')
+    if sslmode == 'require':
+        print('Aviso: la conexión se cifra, pero no se verifica el certificado del servidor. '
+              'Defina SUPABASE_SSLMODE=verify-full y SUPABASE_SSLROOTCERT.', file=sys.stderr)
     ssl_options = {'sslmode': sslmode}
     if os.environ.get('SUPABASE_SSLROOTCERT'):
         ssl_options['sslrootcert'] = os.environ['SUPABASE_SSLROOTCERT']
