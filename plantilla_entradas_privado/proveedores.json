@@ -1,0 +1,10 @@
+{
+  "delpin": {
+    "nombre": "Delpin",
+    "col_codigo": "CODIGO",
+    "col_nombre": "DESCRIPCION",
+    "col_precio": "PRECIO",
+    "cols_stock": ["STOCK INDELPIN", "STOCK LOGISTICS", "STOCK HONDURAS", "STOCK NICARAGUA"],
+    "prefijo_sin_stock": "(S/E)"
+  }
+}
