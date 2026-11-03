@@ -17,3 +17,11 @@ venv/
 # Credenciales locales
 .env
 *.env
+
+# Listas de proveedores y CSV generados: el repositorio es publico, nunca se suben
+*.xlsx
+*.xls
+proveedores/
+entradas/
+productos_*.csv
+registros_por_revisar*.csv
