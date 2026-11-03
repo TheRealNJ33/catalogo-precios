@@ -1281,6 +1281,8 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/520801/botellas.html",
     # Verificada vacía por el usuario el 30-10-2026.
     "https://www.vidri.com.sv/catalogo/351902/chumaceras.html",
+    # Verificada vacía por el usuario el 03-11-2026.
+    "https://www.vidri.com.sv/catalogo/450702/compresores-semi-industriales.html",
 }
 
 # Verificación visual del usuario y HTML del runner, 08-10-2026.
