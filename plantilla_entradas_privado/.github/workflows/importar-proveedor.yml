@@ -14,9 +14,9 @@ on:
         required: false
         default: ''
       modo:
-        description: 'validar = solo convertir y revisar (no guarda ni borra); guardar = importar y borrar'
+        description: 'validar = convertir y revisar; simular = ademas prueba contra Supabase y revierte; guardar = importar y borrar'
         type: choice
-        options: [validar, guardar]
+        options: [validar, simular, guardar]
         default: validar
 
 # Una importacion a la vez; las demas esperan.

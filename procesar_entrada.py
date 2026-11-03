@@ -1,8 +1,9 @@
 """Procesa listas de proveedores (.xlsx) depositadas en entradas/<proveedor>/ de un repositorio PRIVADO.
 
 Para cada archivo: lo convierte con la configuración del proveedor (proveedores.json), valida el CSV
-y, en modo "guardar", simula la importación, la guarda en Supabase y borra el .xlsx. Si algo falla,
-el .xlsx se conserva para reintentar. Los CSV se generan en una carpeta temporal y nunca se versionan.
+y, en modo "guardar", simula la importación, la guarda en Supabase y borra el .xlsx. El modo "simular"
+llega hasta la simulación contra Supabase (que se revierte) y se detiene sin guardar ni borrar. Si algo
+falla, el .xlsx se conserva para reintentar. Los CSV se generan en una carpeta temporal y nunca se versionan.
 """
 import argparse
 import json
@@ -23,7 +24,7 @@ def parse_args():
     parser.add_argument('--config', type=Path, default=Path('proveedores.json'))
     parser.add_argument('--entradas', type=Path, default=Path('entradas'), help='Carpeta que contiene una subcarpeta por proveedor')
     parser.add_argument('--archivo', help='Un solo .xlsx (ruta dentro de la carpeta de entradas, o completa); por defecto todos')
-    parser.add_argument('--modo', choices=['validar', 'guardar'], default='validar')
+    parser.add_argument('--modo', choices=['validar', 'simular', 'guardar'], default='validar')
     parser.add_argument('--convertidor', type=Path, default=AQUI / 'convertir_xlsx.py')
     parser.add_argument('--importador', type=Path, default=AQUI / 'importar_productos.py')
     return parser.parse_args()
@@ -99,6 +100,9 @@ def procesar(args, ruta, base, config):
             raise ValueError('Faltan los secretos de Supabase (SUPABASE_DB_PASSWORD). El archivo se conserva para reintentar.')
         if ejecutar([sys.executable, str(args.importador), str(csv), '--simular'], 'Simulación (se revierte)') != 0:
             raise ValueError('La simulación falló; no se guardó nada')
+        if args.modo == 'simular':
+            print('Modo simular: la prueba con Supabase salió bien y se revirtió. No se guardó nada ni se borró el archivo.')
+            return
         if ejecutar([sys.executable, str(args.importador), str(csv), '--guardar'], 'Guardado en Supabase') != 0:
             raise ValueError('El guardado falló; verifique la base antes de reintentar')
         ruta.unlink()
