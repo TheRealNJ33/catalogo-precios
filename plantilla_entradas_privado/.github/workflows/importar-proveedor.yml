@@ -1,0 +1,93 @@
+name: Importar lista de proveedor
+
+# Este flujo es para un repositorio PRIVADO. Al subir un .xlsx a entradas/<proveedor>/ se convierte,
+# se simula, se guarda en Supabase y se elimina. El codigo vive en el repositorio publico catalogo-precios.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'entradas/**/*.xlsx'
+  workflow_dispatch:
+    inputs:
+      archivo:
+        description: 'Un solo .xlsx (ruta, ej. entradas/delpin/lista.xlsx). Vacio = todos los de entradas/'
+        required: false
+        default: ''
+      modo:
+        description: 'validar = convertir y revisar; simular = ademas prueba contra Supabase y revierte; guardar = importar y borrar'
+        type: choice
+        options: [validar, simular, guardar]
+        default: validar
+
+# Una importacion a la vez; las demas esperan.
+concurrency:
+  group: importar-proveedor
+  cancel-in-progress: false
+
+# contents: write para poder borrar el .xlsx del repositorio tras importarlo.
+permissions:
+  contents: write
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout de este repositorio (privado)
+        uses: actions/checkout@v4
+
+      - name: Checkout del codigo (repositorio publico)
+        uses: actions/checkout@v4
+        with:
+          repository: TheRealNJ33/catalogo-precios
+          ref: main
+          path: codigo
+          persist-credentials: false
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: python -m pip install openpyxl==3.1.5 "psycopg[binary]>=3.2,<4"
+
+      - name: Preparar certificado de Supabase
+        env:
+          SUPABASE_CA_CERT_B64: ${{ secrets.SUPABASE_CA_CERT_B64 }}
+        run: |
+          mkdir -p certs
+          if [ -n "$SUPABASE_CA_CERT_B64" ]; then
+            echo "$SUPABASE_CA_CERT_B64" | base64 -d > certs/prod-ca.crt
+          fi
+
+      - name: Convertir e importar
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SSLMODE: verify-full
+          SUPABASE_SSLROOTCERT: ${{ github.workspace }}/certs/prod-ca.crt
+          ARCHIVO: ${{ github.event.inputs.archivo }}
+          MODO_MANUAL: ${{ github.event.inputs.modo }}
+          EVENTO: ${{ github.event_name }}
+        run: |
+          MODO="guardar"
+          if [ "$EVENTO" = "workflow_dispatch" ]; then MODO="${MODO_MANUAL:-validar}"; fi
+          if [ -n "$ARCHIVO" ]; then
+            python codigo/procesar_entrada.py --config proveedores.json --modo "$MODO" --archivo "$ARCHIVO"
+          else
+            python codigo/procesar_entrada.py --config proveedores.json --modo "$MODO"
+          fi
+
+      - name: Eliminar del repositorio las listas ya importadas
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A entradas
+          if ! git diff --cached --quiet; then
+            git commit -m "Lista importada a Supabase y eliminada"
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "No hay listas que eliminar."
+          fi

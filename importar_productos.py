@@ -1,4 +1,4 @@
-"""Importa CSV de Vidri/Freund en las tablas creadas para este proyecto.
+"""Importa CSV de Vidri/Freund/Delpin en las tablas creadas para este proyecto.
 
 Sin opciones: valida archivos localmente. --simular: ejecuta y revierte.
 --guardar: confirma toda la carga en una sola transacción.
@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 FIELDS = ('proveedor', 'sku', 'nombre', 'precio', 'fecha_consulta')
+SUPPLIERS = {'vidri': 'Vidri', 'freund': 'Freund', 'delpin': 'Delpin'}
 
 
 def normalize(value):
@@ -62,9 +63,9 @@ def read_csv(path):
                 raise ValueError('hay campos vacíos')
             if any('\x00' in v for v in record.values()):
                 raise ValueError('hay caracteres nulos')
-            supplier = {'vidri': 'Vidri', 'freund': 'Freund'}.get(normalize(record['proveedor']))
+            supplier = SUPPLIERS.get(normalize(record['proveedor']))
             if supplier is None:
-                raise ValueError('proveedor desconocido; se admite Vidri o Freund')
+                raise ValueError('proveedor desconocido; se admite ' + ', '.join(SUPPLIERS.values()))
             price_text = record['precio']
             if not re.fullmatch(r'\d+(?:\.\d{1,2})?', price_text):
                 raise ValueError('precio inválido; use punto decimal, sin $ ni separadores de miles')
