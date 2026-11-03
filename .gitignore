@@ -1,0 +1,19 @@
+# Resultados de corridas, estado SQLite y logs (se generan al ejecutar)
+datos/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.lock
+
+# Certificado de Supabase (el workflow lo genera a partir de un secreto)
+certs/
+
+# Python y entornos
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Credenciales locales
+.env
+*.env

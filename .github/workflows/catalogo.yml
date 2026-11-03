@@ -27,6 +27,10 @@ on:
         required: false
         default: '100'
 
+# El flujo solo lee el codigo; cache y artefactos usan su propio token de ejecucion.
+permissions:
+  contents: read
+
 concurrency:
   group: catalogo-scraper
   cancel-in-progress: false
@@ -41,9 +45,14 @@ jobs:
 
       - name: Calcular identificador de campana (semana ISO, hora El Salvador)
         id: campana
+        env:
+          OVERRIDE: ${{ github.event.inputs.run_id_override }}
         run: |
-          OVERRIDE="${{ github.event.inputs.run_id_override }}"
           if [ -n "$OVERRIDE" ]; then
+            if ! [[ "$OVERRIDE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+              echo "ERROR: run_id_override solo admite letras, numeros, guiones y guiones bajos (maximo 80)."
+              exit 1
+            fi
             echo "id=$OVERRIDE" >> "$GITHUB_OUTPUT"
           else
             echo "id=catalogo-$(TZ='America/El_Salvador' date +%G-W%V)" >> "$GITHUB_OUTPUT"
@@ -72,8 +81,10 @@ jobs:
 
       - name: Verificar si hay estado para reanudar
         id: estado
+        env:
+          CAMPANA: ${{ steps.campana.outputs.id }}
         run: |
-          if [ -d "datos/${{ steps.campana.outputs.id }}" ]; then
+          if [ -d "datos/$CAMPANA" ]; then
             echo "reanudar=--reanudar" >> "$GITHUB_OUTPUT"
           else
             echo "reanudar=" >> "$GITHUB_OUTPUT"
@@ -91,13 +102,25 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_SSLMODE: verify-full
           SUPABASE_SSLROOTCERT: ${{ github.workspace }}/certs/prod-ca.crt
+          CAMPANA: ${{ steps.campana.outputs.id }}
+          REANUDAR: ${{ steps.estado.outputs.reanudar }}
+          INICIO: ${{ github.event.inputs.inicio }}
+          FIN: ${{ github.event.inputs.fin }}
+          PROVEEDOR: ${{ github.event.inputs.proveedor }}
+          MAXPAGINAS: ${{ github.event.inputs.max_paginas }}
         run: |
-          INICIO="${{ github.event.inputs.inicio }}"
-          FIN="${{ github.event.inputs.fin }}"
-          PROVEEDOR="${{ github.event.inputs.proveedor }}"
-          MAXPAGINAS="${{ github.event.inputs.max_paginas }}"
+          for VALOR in "$INICIO" "$FIN" "$MAXPAGINAS"; do
+            if [ -n "$VALOR" ] && ! [[ "$VALOR" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: inicio, fin y max_paginas deben ser numeros enteros."
+              exit 1
+            fi
+          done
+          case "$PROVEEDOR" in
+            ""|ambos|vidri|freund) ;;
+            *) echo "ERROR: proveedor debe ser ambos, vidri o freund."; exit 1 ;;
+          esac
           MAXPAGINAS="${MAXPAGINAS:-100}"
-          ARGS="--run-id ${{ steps.campana.outputs.id }} --guardar ${{ steps.estado.outputs.reanudar }}"
+          ARGS="--run-id $CAMPANA --guardar $REANUDAR"
           if [ -n "$INICIO" ]; then ARGS="$ARGS --inicio $INICIO"; fi
           if [ -n "$FIN" ]; then ARGS="$ARGS --fin $FIN"; fi
           if [ -n "$PROVEEDOR" ]; then ARGS="$ARGS --proveedor $PROVEEDOR"; fi
