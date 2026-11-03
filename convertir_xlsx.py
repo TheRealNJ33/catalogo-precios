@@ -3,6 +3,8 @@
 Salida: <proveedor>;<nombre>;<sku>;<precio>;<fecha_consulta> (UTF-8 con BOM, separador ';').
 Reglas: el precio se redondea a 2 decimales (mitad hacia arriba); se conserva el precio 0;
 se conserva el texto (incluidos '>' y comillas) salvo que los espacios repetidos se colapsan;
+si se indican columnas de existencias (--col-stock) y --prefijo-sin-stock, los productos sin
+existencias en ninguna de ellas llevan ese prefijo delante del nombre, por ejemplo '(S/E) Tubo';
 el código se lee como texto para no perder los ceros a la izquierda. Las filas con campos
 vacíos, precio inválido o código repetido no se importan: van a registros_por_revisar_<proveedor>.csv.
 """
@@ -49,6 +51,19 @@ def parse_price(value):
     return number, None
 
 
+def parse_stock(values):
+    """True si hay existencias, False si no hay en ninguna columna, None si algún valor no es legible."""
+    total = Decimal(0)
+    for value in values:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        try:
+            total += Decimal(str(value).strip())
+        except InvalidOperation:
+            return None
+    return total > 0
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('xlsx', type=Path, help='Archivo Excel del proveedor')
@@ -58,6 +73,9 @@ def parse_args():
     parser.add_argument('--col-codigo', default='CODIGO')
     parser.add_argument('--col-nombre', default='DESCRIPCION')
     parser.add_argument('--col-precio', default='PRECIO')
+    parser.add_argument('--col-stock', action='append', default=[], metavar='COLUMNA',
+                        help='Columna de existencias; repetir la opción por cada bodega')
+    parser.add_argument('--prefijo-sin-stock', default='', help='Texto que se antepone al nombre si no hay existencias, p. ej. (S/E)')
     parser.add_argument('--salida', type=Path, help='CSV de salida; por defecto productos_<proveedor>.csv junto al .xlsx')
     return parser.parse_args()
 
@@ -82,7 +100,14 @@ def convert(args):
     header = next(rows, None)
     if not header:
         raise ValueError('La hoja está vacía')
-    cols = find_columns(header, {'sku': args.col_codigo, 'nombre': args.col_nombre, 'precio': args.col_precio})
+    wanted = {'sku': args.col_codigo, 'nombre': args.col_nombre, 'precio': args.col_precio}
+    wanted.update({f'stock{n}': name for n, name in enumerate(args.col_stock)})
+    cols = find_columns(header, wanted)
+    stock_keys = [k for k in cols if k.startswith('stock')]
+    prefix = clean_text(args.prefijo_sin_stock)
+    if stock_keys and not prefix:
+        raise ValueError('Indicó columnas de existencias pero falta --prefijo-sin-stock')
+    sin_stock = stock_ilegible = 0
 
     products, review, seen = [], [], {}
     total = 0
@@ -104,6 +129,13 @@ def convert(args):
             review.append({'fila': line, 'motivo': motivo, 'codigo': sku, 'descripcion': nombre, 'precio': raw['precio']})
             continue
         seen[sku] = line
+        if stock_keys:
+            hay = parse_stock(raw[k] for k in stock_keys)
+            if hay is None:
+                stock_ilegible += 1
+            elif not hay:
+                nombre = f'{prefix} {nombre}'
+                sin_stock += 1
         products.append([proveedor, nombre, sku, f'{precio:.2f}', day.strftime('%d-%m-%Y')])
 
     out = args.salida or args.xlsx.with_name(f'productos_{normalize(proveedor)}.csv')
@@ -121,7 +153,8 @@ def convert(args):
         review_path.unlink()
     return {'filas': total, 'productos': len(products), 'revision': len(review), 'fecha': day,
             'csv': out, 'revision_csv': review_path if review else None,
-            'precio_cero': sum(1 for p in products if p[3] == '0.00')}
+            'precio_cero': sum(1 for p in products if p[3] == '0.00'),
+            'sin_stock': sin_stock, 'stock_ilegible': stock_ilegible, 'con_stock': bool(stock_keys)}
 
 
 def main():
@@ -133,6 +166,9 @@ def main():
     print(f"Filas leídas: {result['filas']}\nProductos convertidos: {result['productos']}"
           f" (de ellos con precio 0: {result['precio_cero']})\nPara revisar (no se importan): {result['revision']}\n"
           f"Fecha de consulta: {result['fecha'].strftime('%d-%m-%Y')}\nArchivo: {result['csv']}")
+    if result['con_stock']:
+        print(f"Marcados sin existencias: {result['sin_stock']}"
+              + (f" (existencia ilegible, sin marcar: {result['stock_ilegible']})" if result['stock_ilegible'] else ''))
     if result['revision_csv']:
         print(f"Revisión: {result['revision_csv']}")
     return 0
