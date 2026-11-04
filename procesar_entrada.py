@@ -70,6 +70,8 @@ def comando_conversion(args, cfg, xlsx, csv):
                           ('--prefijo-sin-stock', 'prefijo_sin_stock')):
         if cfg.get(clave):
             comando += [opcion, str(cfg[clave])]
+    for sede in cfg.get('sedes', []):
+        comando += ['--sede', f"{sede['columna']}={sede['letra']}"]
     for columna in cfg.get('cols_stock', []):
         comando += ['--col-stock', str(columna)]
     return comando

@@ -4,7 +4,12 @@
     "col_codigo": "CODIGO",
     "col_nombre": "DESCRIPCION",
     "col_precio": "PRECIO",
-    "cols_stock": ["STOCK INDELPIN", "STOCK LOGISTICS", "STOCK HONDURAS", "STOCK NICARAGUA"],
+    "sedes": [
+      {"columna": "STOCK INDELPIN", "letra": "D"},
+      {"columna": "STOCK LOGISTICS", "letra": "L"},
+      {"columna": "STOCK HONDURAS", "letra": "H"},
+      {"columna": "STOCK NICARAGUA", "letra": "N"}
+    ],
     "prefijo_sin_stock": "(S/E)"
   }
 }
