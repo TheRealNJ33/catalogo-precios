@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from ejecucion_persistente import atomic_json, lock, run_id, validate_id, now
+from ejecucion_persistente import atomic_json, lock, reopen, run_id, validate_id, now
 
 SCRIPTS = {'vidri': 'scraper_vidri_2.py', 'freund': 'scraper_freund_V8.py'}
 
@@ -88,6 +88,18 @@ def is_weekly(identifier):
     return re.fullmatch(r'catalogo-(\d{4})-W(\d{2})', identifier) is not None
 
 
+def parse_reabrir(text):
+    """'freund=/TORNILLOS/productos/NVL3-35,freund=ANCLAS' -> {'freund': ['/TORNILLOS/productos/NVL3-35', 'ANCLAS']}."""
+    result = {}
+    for item in filter(None, (t.strip() for t in text.split(','))):
+        supplier, separator, fragment = item.partition('=')
+        if not separator or supplier not in SCRIPTS or not re.fullmatch(r'[A-Za-z0-9_./-]+', fragment):
+            raise SystemExit(f'--reabrir: elemento no válido {item!r}; use PROVEEDOR=FRAGMENTO con proveedor '
+                             + ' o '.join(SCRIPTS))
+        result.setdefault(supplier, []).append(fragment)
+    return result
+
+
 def run_logged(command, logfile, base, deadline, env=None):
     """Deja margen para que el scraper cierre SQLite y el workflow guarde el caché."""
     remaining = deadline - time.monotonic()
@@ -120,6 +132,9 @@ def main():
     parser.add_argument('--max-paginas', type=int, default=100)
     parser.add_argument('--minutos-maximos', type=float, default=315)
     parser.add_argument('--xlsx', action='store_true')
+    parser.add_argument('--reabrir', default='', metavar='PROVEEDOR=FRAGMENTO[,...]',
+                        help='Reabre categorías ya terminadas de una campaña para recapturarlas (requiere --reanudar), '
+                             'p. ej. freund=/TORNILLOS/productos/NVL3-35. Cada fragmento debe coincidir con una sola URL.')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--guardar', action='store_true')
     modes.add_argument('--simular-importacion', action='store_true')
@@ -128,6 +143,9 @@ def main():
         parser.error('--reanudar requiere --run-id')
     if args.max_paginas < 1 or not 0 < args.minutos_maximos <= 315:
         parser.error('--max-paginas debe ser positivo y --minutos-maximos debe estar entre 0 y 315')
+    reabrir = parse_reabrir(args.reabrir)
+    if reabrir and not args.reanudar:
+        parser.error('--reabrir requiere --reanudar')
     base = Path(__file__).resolve().parent
     try:
         identifier = validate_id(args.run_id or run_id())
@@ -166,6 +184,18 @@ def main():
                          'campana_completa': complete}
                 atomic_json(path, value)
                 return complete
+
+            for supplier, fragments in reabrir.items():
+                if supplier not in suppliers:
+                    raise ValueError(f'--reabrir {supplier} requiere --proveedor ambos o {supplier}')
+                database = folder / supplier / 'estado.sqlite'
+                if not database.is_file():
+                    raise ValueError(f'No hay estado de {supplier} en esta campaña para reabrir')
+                for url, page in reopen(database, fragments):
+                    print(f'{supplier}: categoría reabierta desde la página {page}: {url}', flush=True)
+                # Sin resultado guardado, el proveedor vuelve a scrapearse e importarse en esta ejecución.
+                results.pop(supplier, None)
+                persist()
 
             # Conserva al otro proveedor, incluso cuando esta llamada pide solo uno.
             # Verifica también su evidencia antes de declarar la campaña completa.
