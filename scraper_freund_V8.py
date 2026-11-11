@@ -369,6 +369,8 @@ GUARDAR_CADA_N_CATEGORIAS = 20
 ESPERA_ENTRE_CATEGORIAS = 5  # segundos
 PAUSA_LARGA_CADA_N_CATEGORIAS = 50
 PAUSA_LARGA_SEGUNDOS = 30
+# Un «sin resultados» en la página 1 se reconfirma antes de dar la categoría por vacía (ejecucion_persistente).
+RECONFIRMAR_PRIMERA_PAGINA_VACIA = True
 
 TEXTO_SIN_RESULTADOS = "No se encontraron resultados"
 

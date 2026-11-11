@@ -17,6 +17,10 @@ from pathlib import Path
 
 ES = timezone(timedelta(hours=-6))
 FIELDS = ['proveedor', 'nombre', 'sku', 'precio', 'fecha_consulta']
+# «Sin resultados» justo después de una página completa puede ser una respuesta falsa del sitio:
+# antes de dar por terminada la categoría se vuelve a consultar esta cantidad de veces.
+RECONFIRMACIONES = 3
+ESPERA_RECONFIRMACION = 10  # segundos
 
 
 def now():
@@ -222,6 +226,36 @@ class State:
         return report
 
 
+def reopen(db_path, fragments):
+    """Reabre categorías ya terminadas: quedan pendientes desde la página siguiente a la última guardada.
+
+    Cada fragmento debe coincidir con exactamente una URL de categoría, para no reabrir por accidente
+    varias a la vez. Devuelve [(url, página desde la que se reanuda)].
+    """
+    db = sqlite3.connect(db_path)
+    try:
+        urls = [row[0] for row in db.execute('select url from categories')]
+        elegidas = []
+        for fragment in fragments:
+            if not fragment.strip():
+                raise ValueError('Hay un fragmento de categoría vacío')
+            coincidencias = [u for u in urls if fragment in u]
+            if len(coincidencias) != 1:
+                raise ValueError(f'El fragmento "{fragment}" coincide con {len(coincidencias)} categorías; '
+                                 'debe coincidir con exactamente una')
+            elegidas.append(coincidencias[0])
+        reabiertas = []
+        with db:
+            for url in dict.fromkeys(elegidas):
+                ultima = db.execute('select max(page) from pages where url=?', (url,)).fetchone()[0] or 0
+                db.execute("update categories set status='pendiente', next_page=?, reason='Reabierta para recapturar' "
+                           'where url=?', (ultima + 1, url))
+                reabiertas.append((url, ultima + 1))
+        return reabiertas
+    finally:
+        db.close()
+
+
 def write_csv(path, fields, rows):
     temp = path.with_name(path.name + '.tmp')
     with temp.open('w', encoding='utf-8-sig', newline='') as stream:
@@ -238,8 +272,22 @@ async def collect(module, state, crawler, max_pages, sleep=asyncio.sleep):
         url = category['url']
         print(f"Categoría {category['idx']}: {url}; desde página {category['next_page']}", flush=True)
         seen = state.seen(url)
+        previous_len = None
         for page in range(category['next_page'], max_pages + 1):
             rows, status = await module.intentar_pagina(crawler, module.construir_url_pagina(url, page), url, page)
+            # La página 1 vacía solo se reconfirma si el scraper lo pide: las categorías legítimamente vacías
+            # cuestan unos segundos más, pero un falso vacío dejaba fuera categorías enteras.
+            if status == 'sin_productos' and (
+                    (page > 1 and (previous_len is None or previous_len >= module.PRODUCTOS_POR_PAGINA))
+                    or (page == 1 and getattr(module, 'RECONFIRMAR_PRIMERA_PAGINA_VACIA', False))):
+                motivo = 'tras una página completa' if page > 1 else 'en la primera página'
+                for attempt in range(1, RECONFIRMACIONES + 1):
+                    print(f'    «Sin resultados» {motivo}; reconfirmando ({attempt}/{RECONFIRMACIONES})...',
+                          flush=True)
+                    await sleep(ESPERA_RECONFIRMACION)
+                    rows, status = await module.intentar_pagina(crawler, module.construir_url_pagina(url, page), url, page)
+                    if status != 'sin_productos':
+                        break
             if status == 'error':
                 errors = getattr(module, 'errores_paginas', [])
                 reason = errors[-1][2] if errors else 'Página fallida tras reintentos'
@@ -251,6 +299,7 @@ async def collect(module, state, crawler, max_pages, sleep=asyncio.sleep):
             if status != 'ok' or not rows:
                 state.mark(url, 'error', 'Respuesta inesperada o vacía sin confirmación')
                 break
+            previous_len = len(rows)
             valid, rejected, skus = normalize_rows(rows, module.PROVEEDOR, url, page)
             repeated = bool(skus) and skus.issubset(seen)
             last = len(rows) < module.PRODUCTOS_POR_PAGINA
