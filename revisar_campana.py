@@ -83,10 +83,15 @@ def leer_json(ruta):
 
 
 def productos_por_categoria(log):
-    """{url: (productos, productos de la última página)} a partir de las líneas «Página N: V válidos»."""
-    paginas, actual = {}, None
+    """({url: (productos, productos de la última página)}, {urls cuyo fin el scraper reconfirmó 3 veces}).
+
+    Los productos salen de las líneas «Página N: V válidos». Las reconfirmaciones son las líneas
+    «reconfirmando (3/3)»: el sitio respondió «sin resultados» cuatro veces seguidas, así que el fin
+    de la categoría es casi seguro real y no un fallo de lectura.
+    """
+    paginas, actual, reconfirmadas = {}, None, set()
     if not log.is_file():
-        return {}
+        return {}, set()
     for linea in log.open(encoding='utf-8', errors='replace'):
         m = re.match(r'Categoría \d+: (\S+); desde página', linea)
         if m:
@@ -96,14 +101,16 @@ def productos_por_categoria(log):
         m = re.match(r'\s+Página (\d+): (\d+) válidos', linea)
         if m and actual:
             paginas[actual][int(m[1])] = int(m[2])
-    return {url: (sum(p.values()), p[max(p)] if p else 0) for url, p in paginas.items()}
+        elif actual and 'reconfirmando (3/3)' in linea:
+            reconfirmadas.add(actual)
+    return {url: (sum(p.values()), p[max(p)] if p else 0) for url, p in paginas.items()}, reconfirmadas
 
 
 def nombre_corto(url):
     return re.sub(r'^https?://[^/]+/(categoria|catalogo)/', '', url)[:70]
 
 
-def revisar_proveedor(proveedor, actual, anterior, alertas, avisos):
+def revisar_proveedor(proveedor, actual, anterior, alertas, avisos, verificar):
     """actual/anterior: carpetas de artefactos descargados (anterior puede ser None)."""
     res = leer_json(actual / proveedor / 'resumen.json')
     pipe = (leer_json(actual / 'pipeline.json') or {}).get('resultados', {}).get(proveedor, {})
@@ -137,8 +144,8 @@ def revisar_proveedor(proveedor, actual, anterior, alertas, avisos):
         if extra >= SALTO_POR_REVISAR:
             avisos.append(f"{proveedor}: los registros por revisar subieron de {previo['registros_por_revisar']} "
                           f"a {res['registros_por_revisar']}.")
-    ahora = productos_por_categoria(actual / f'{proveedor}.log')
-    antes = productos_por_categoria(anterior / f'{proveedor}.log')
+    ahora, reconfirmadas = productos_por_categoria(actual / f'{proveedor}.log')
+    antes, _ = productos_por_categoria(anterior / f'{proveedor}.log')
     por_pagina = PRODUCTOS_POR_PAGINA[proveedor]
     a_cero, cortes, caidas = [], [], []
     for url, (n_antes, _) in antes.items():
@@ -146,11 +153,19 @@ def revisar_proveedor(proveedor, actual, anterior, alertas, avisos):
             continue
         n_ahora, ultima = ahora[url]
         if n_antes >= MIN_PRODUCTOS_CATEGORIA and n_ahora == 0:
-            a_cero.append(f'{nombre_corto(url)} ({n_antes} -> 0)')
+            destino, texto = a_cero, f'{nombre_corto(url)} ({n_antes} -> 0)'
         elif n_antes - n_ahora >= MIN_CAIDA_MITAD and n_ahora <= n_antes * 0.5:
-            caidas.append(f'{nombre_corto(url)} ({n_antes} -> {n_ahora})')
+            destino, texto = caidas, f'{nombre_corto(url)} ({n_antes} -> {n_ahora})'
         elif n_antes - n_ahora >= MIN_CAIDA_CORTE and ultima == por_pagina:
-            cortes.append(f'{nombre_corto(url)} ({n_antes} -> {n_ahora})')
+            destino, texto = cortes, f'{nombre_corto(url)} ({n_antes} -> {n_ahora})'
+        else:
+            continue
+        if url in reconfirmadas:
+            # El scraper insistió 3 veces y el sitio siguió sin dar más productos: no es una alarma,
+            # pero se muestra para que Rafael decida si la categoría le sigue interesando.
+            verificar.append({'proveedor': proveedor, 'url': url, 'antes': n_antes, 'ahora': n_ahora})
+        else:
+            destino.append(texto)
     if a_cero:
         alertas.append(f'{proveedor}: categorías que pasaron a 0 productos (posible falso vacío): ' + '; '.join(a_cero))
     if caidas:
@@ -185,7 +200,7 @@ def main():
     args = parser.parse_args()
     campana = args.campana or id_campana(datetime.now(SALVADOR))
     previa = campana_anterior(campana)
-    alertas, avisos = [], []
+    alertas, avisos, verificar = [], [], []
     print(f'REVISIÓN DE LA CAMPAÑA {campana} (anterior: {previa})  {datetime.now(SALVADOR):%Y-%m-%d %H:%M} hora de El Salvador')
 
     print('\n1. Ejecuciones de la semana')
@@ -225,7 +240,7 @@ def main():
             if not pipe.get('campana_completa'):
                 alertas.append(f'La campaña {campana} aún no está completa.')
             for proveedor in ('vidri', 'freund'):
-                revisar_proveedor(proveedor, actual, anterior, alertas, avisos)
+                revisar_proveedor(proveedor, actual, anterior, alertas, avisos, verificar)
 
     print('\n3. Listas de proveedores')
     revisar_entradas(args.repo_entradas, 7, alertas, avisos)
@@ -239,6 +254,13 @@ def main():
         print('VEREDICTO: TODO BIEN')
     for a in avisos:
         print(f'  [aviso] {a}')
+    if verificar:
+        print('\nCATEGORÍAS A VERIFICAR EN EL SITIO (no son alertas)')
+        print('  El scraper insistió 3 veces y el sitio no dio más productos; casi seguro el sitio quitó productos.')
+        print('  Siguen incluidas en los escaneos. Si alguna ya no te interesa o desapareció, se puede quitar de la lista.')
+        for v in verificar:
+            print(f"  - {v['proveedor']}: {nombre_corto(v['url'])}: {v['antes']} -> {v['ahora']} productos")
+            print(f"    {v['url']}")
     return 1 if alertas else 0
 
 
