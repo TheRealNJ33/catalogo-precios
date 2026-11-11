@@ -69,10 +69,33 @@ jobs:
           cache: 'pip'
 
       - name: Instalar dependencias
+        env:
+          ESPERA_BASE: '45'
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          # La red del servidor de GitHub falla a veces (p. ej. «Temporary failure resolving archive.ubuntu.com»).
+          # Se reintenta con pausas crecientes y, si el instalador de paquetes del sistema sigue sin responder,
+          # se instala solo el navegador (las bibliotecas suelen venir ya en la imagen del servidor).
+          reintentar() {
+            local intento=1 maximo=4
+            while true; do
+              if "$@"; then return 0; fi
+              if [ "$intento" -ge "$maximo" ]; then
+                echo "ERROR: '$*' falló tras $maximo intentos."
+                return 1
+              fi
+              local espera=$((intento * ESPERA_BASE))
+              echo "AVISO: '$*' falló (intento $intento/$maximo); se reintenta en ${espera}s."
+              sleep "$espera"
+              intento=$((intento + 1))
+            done
+          }
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-reintentos > /dev/null
+          reintentar python -m pip install --upgrade pip
+          reintentar pip install -r requirements.txt
+          if ! reintentar python -m playwright install --with-deps chromium; then
+            echo "AVISO: no se pudieron instalar las bibliotecas del sistema; se instala solo Chromium."
+            reintentar python -m playwright install chromium
+          fi
 
       - name: Restaurar estado previo (si existe)
         id: cache
