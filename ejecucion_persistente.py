@@ -275,10 +275,14 @@ async def collect(module, state, crawler, max_pages, sleep=asyncio.sleep):
         previous_len = None
         for page in range(category['next_page'], max_pages + 1):
             rows, status = await module.intentar_pagina(crawler, module.construir_url_pagina(url, page), url, page)
-            if (status == 'sin_productos' and page > 1
-                    and (previous_len is None or previous_len >= module.PRODUCTOS_POR_PAGINA)):
+            # La página 1 vacía solo se reconfirma si el scraper lo pide: las categorías legítimamente vacías
+            # cuestan unos segundos más, pero un falso vacío dejaba fuera categorías enteras.
+            if status == 'sin_productos' and (
+                    (page > 1 and (previous_len is None or previous_len >= module.PRODUCTOS_POR_PAGINA))
+                    or (page == 1 and getattr(module, 'RECONFIRMAR_PRIMERA_PAGINA_VACIA', False))):
+                motivo = 'tras una página completa' if page > 1 else 'en la primera página'
                 for attempt in range(1, RECONFIRMACIONES + 1):
-                    print(f'    «Sin resultados» tras una página completa; reconfirmando ({attempt}/{RECONFIRMACIONES})...',
+                    print(f'    «Sin resultados» {motivo}; reconfirmando ({attempt}/{RECONFIRMACIONES})...',
                           flush=True)
                     await sleep(ESPERA_RECONFIRMACION)
                     rows, status = await module.intentar_pagina(crawler, module.construir_url_pagina(url, page), url, page)
