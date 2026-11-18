@@ -1283,6 +1283,16 @@ CATEGORIAS_VACIAS_CONFIRMADAS = {
     "https://www.vidri.com.sv/catalogo/351902/chumaceras.html",
     # Verificada vacía por el usuario el 03-11-2026.
     "https://www.vidri.com.sv/catalogo/450702/compresores-semi-industriales.html",
+    # Verificadas vacías por el usuario el 18-11-2026.
+    "https://www.vidri.com.sv/catalogo/352005/otros-tipos-de-rodos-y-ruedas.html",
+    "https://www.vidri.com.sv/catalogo/201607/kits-y-juegos-de-terminales-electricas.html",
+}
+
+# Última página real de categorías cuya página siguiente sale vacía sin aviso del sitio.
+# Persianas: la página 4 trae 15 tarjetas (14 válidas y 1 por revisar), por eso la regla de
+# fin de paginación (página previa con 15 filas válidas) no se cumple. Verificado por el usuario el 18-11-2026.
+CATEGORIAS_ULTIMA_PAGINA_CONFIRMADA = {
+    "https://www.vidri.com.sv/catalogo/540403/persianas.html": 4,
 }
 
 # Verificación visual del usuario y HTML del runner, 08-10-2026.
@@ -1658,7 +1668,9 @@ async def intentar_pagina(crawler, url, url_categoria, numero_pagina):
             guardar_diagnostico(result, url, numero_pagina, motivo)
             return [], "sin_productos"
         if (numero_pagina > 1 and vacios_estructurados == MAX_INTENTOS_POR_PAGINA
-                and not estructura.contenedor and _pagina_previa_guardada(url_categoria, numero_pagina)):
+                and not estructura.contenedor
+                and (_pagina_previa_guardada(url_categoria, numero_pagina)
+                     or numero_pagina == CATEGORIAS_ULTIMA_PAGINA_CONFIRMADA.get(url_categoria, 0) + 1)):
             motivo = "Fin de paginación: página previa completa guardada; tres respuestas de la misma categoría sin listado"
             print(f"    -> {motivo}.")
             guardar_diagnostico(result, url, numero_pagina, motivo)
